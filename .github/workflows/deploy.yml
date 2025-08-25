@@ -18,24 +18,43 @@ jobs:
 
       - name: Prepare SSH key
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          printf "%s" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Deploy via rsync (IdentitiesOnly)
+      - name: Debug SSH (one attempt, verbose)
         run: |
+          set -x
+          unset SSH_AUTH_SOCK || true
+          ssh -vvv -i ~/.ssh/id_ed25519 -p "${{ secrets.SSH_PORT }}" \
+            -o IdentitiesOnly=yes -o IdentityAgent=none \
+            -o PreferredAuthentications=publickey \
+            -o PubkeyAuthentication=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "echo SSH_OK"
+
+      - name: Deploy via rsync
+        run: |
+          set -euo pipefail
+          unset SSH_AUTH_SOCK || true
+          RSYNC_SSH='ssh -i ~/.ssh/id_ed25519 -p "${{ secrets.SSH_PORT }}" -o IdentitiesOnly=yes -o IdentityAgent=none -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes'
           rsync -avr \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude ".DS_Store" \
             ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_TARGET }}/" \
-            -e "ssh -i ~/.ssh/id_ed25519 -p ${{ secrets.SSH_PORT }} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+            -e "$RSYNC_SSH"
 
       - name: Post-deploy (optional)
         if: always()
         run: |
-          ssh -i ~/.ssh/id_ed25519 -p "${{ secrets.SSH_PORT }}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          unset SSH_AUTH_SOCK || true
+          ssh -i ~/.ssh/id_ed25519 -p "${{ secrets.SSH_PORT }}" \
+            -o IdentitiesOnly=yes -o IdentityAgent=none \
+            -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+            -o StrictHostKeyChecking=yes \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "find '${{ secrets.SSH_TARGET }}' -type d -exec chmod 755 {} \; && find '${{ secrets.SSH_TARGET }}' -type f -exec chmod 644 {} \;"
