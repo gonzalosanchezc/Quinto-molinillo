@@ -1,0 +1,42 @@
+name: Deploy to VPS (quintomolinillo)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-quintomolinillo
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        shell: bash
+        run: |
+          install -m 600 -D /dev/null ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts || true
+
+      - name: Deploy via rsync
+        shell: bash
+        run: |
+          rsync -avr \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude ".DS_Store" \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_TARGET }}/ \
+            -e "ssh -i ~/.ssh/id_ed25519 -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=yes"
+          # Para borrar en el servidor lo que ya no exista en el repo, añade --delete a la línea de rsync
+
+      - name: Post-deploy (opcional)
+        if: always()
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "find '${{ secrets.SSH_TARGET }}' -type d -exec chmod 755 {} \; && find '${{ secrets.SSH_TARGET }}' -type f -exec chmod 644 {} \;"
