@@ -16,44 +16,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare SSH key & config
-        shell: bash
+      - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          # Llave privada
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # Conocidos + config para usar SOLO esta llave
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-          cat > ~/.ssh/config <<EOF
-          Host vps
-            HostName ${{
-              secrets.SSH_HOST
-            }}
-            User ${{
-              secrets.SSH_USER
-            }}
-            Port ${{
-              secrets.SSH_PORT
-            }}
-            IdentityFile ~/.ssh/id_ed25519
-            IdentitiesOnly yes
-            PreferredAuthentications publickey
-            StrictHostKeyChecking yes
-          EOF
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Deploy via rsync
-        shell: bash
+      - name: Deploy via rsync (IdentitiesOnly)
         run: |
           rsync -avr \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude ".DS_Store" \
-            ./ vps:${{ secrets.SSH_TARGET }}/
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_TARGET }}/" \
+            -e "ssh -i ~/.ssh/id_ed25519 -p ${{ secrets.SSH_PORT }} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
 
-      - name: Post-deploy (opcional: normaliza permisos)
+      - name: Post-deploy (optional)
         if: always()
-        shell: bash
         run: |
-          ssh vps "find '${{ secrets.SSH_TARGET }}' -type d -exec chmod 755 {} \; && find '${{ secrets.SSH_TARGET }}' -type f -exec chmod 644 {} \;"
+          ssh -i ~/.ssh/id_ed25519 -p "${{ secrets.SSH_PORT }}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "find '${{ secrets.SSH_TARGET }}' -type d -exec chmod 755 {} \; && find '${{ secrets.SSH_TARGET }}' -type f -exec chmod 644 {} \;"
