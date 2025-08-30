@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      debug:
+        description: "Enable SSH verbose debug"
+        required: false
+        default: "false"
 
 concurrency:
   group: deploy-quintomolinillo
@@ -12,6 +17,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,18 +37,13 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Inspect key (header and size)
-        run: |
-          echo "First line:" && head -n1 ~/.ssh/id_ed25519 || true
-          echo "Last line:" && tail -n1 ~/.ssh/id_ed25519 || true
-          echo "Byte size:" && wc -c ~/.ssh/id_ed25519 || true
-
       - name: Show key fingerprint
         run: |
           ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
           echo "Runner key fingerprint:" && ssh-keygen -lf ~/.ssh/id_ed25519.pub || true
 
       - name: Debug SSH (one attempt, verbose)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true' }}
         run: |
           set -x
           unset SSH_AUTH_SOCK || true
@@ -61,10 +63,11 @@ jobs:
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude ".DS_Store" \
+            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
             ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.SSH_TARGET }}/" \
             -e "$RSYNC_SSH"
 
-      - name: Post-deploy (optional)
+      - name: Post-deploy (permissions sweep)
         if: always()
         run: |
           unset SSH_AUTH_SOCK || true
@@ -74,3 +77,10 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
             "find '${{ secrets.SSH_TARGET }}' -type d -exec chmod 755 {} \; && find '${{ secrets.SSH_TARGET }}' -type f -exec chmod 644 {} \;"
+
+      - name: Upload SSH dir on failure (optional)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-debug
+          path: ~/.ssh
